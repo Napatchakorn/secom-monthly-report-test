@@ -647,10 +647,12 @@ def build_pmax_channel_report(df: pd.DataFrame, strip_suffix: str = "") -> pd.Da
     def _get_conversion(row):
         if 'CONSIDERATION' in str(row['Original Name']):
             val = _extract_result_value(row.get('Results', ''), 'Contact')
-            return f"Contact: {val}"
         else:
             val = _extract_result_value(row.get('Results', ''), 'Submit lead form')
-            return f"Submit lead form: {val}"
+        try:
+            return float(str(val).replace(',', ''))
+        except ValueError:
+            return 0.0
 
     df['Conversions']   = df.apply(_get_conversion, axis=1)
     df['Report Source'] = 'Google PMX'
