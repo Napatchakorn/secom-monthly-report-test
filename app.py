@@ -89,7 +89,7 @@ div.stDownloadButton > button:hover { background:#1a2f5e !important; }
 with st.sidebar:
     st.markdown("## 📊 Report Manager")
     st.markdown("---")
-    mode = st.radio("Select Mode", ["🔷 Generic Report", "🎯 SECOM Monthly Report", "📊 PMAX Conversion"], index=0)
+    mode = st.radio("Select Mode", ["🔷 Generic Report", "🎯 SECOM Monthly Report", "📊 Channel Performance"], index=0)
     st.markdown("---")
 
     if "Generic" in mode:
@@ -118,7 +118,7 @@ with st.sidebar:
             st.caption(f"• {c}")
 
     else:
-        st.markdown("### 📊 PMAX Conversion")
+        st.markdown("### 📊 Channel Performance")
         st.caption("Channel distribution report processor")
         st.markdown("**File needed:**")
         st.markdown("- 📒 PMX Channel distribution `.csv`")
@@ -129,7 +129,7 @@ with st.sidebar:
 
 # ── Header ───────────────────────────────────────────────────────────────────
 badge_cls  = "mode-badge secom" if "SECOM" in mode else "mode-badge"
-badge_text = "SECOM MODE" if "SECOM" in mode else ("PMAX MODE" if "PMAX" in mode else "GENERIC MODE")
+badge_text = "SECOM MODE" if "SECOM" in mode else ("PMAX MODE" if "Channel" in mode else "GENERIC MODE")
 st.markdown(f"""
 <div class="app-header">
   <div class="logo">📊</div>
@@ -145,7 +145,7 @@ st.markdown(f"""
 if "Generic" in mode:
     from ui_generic import render_generic
     render_generic(drop_dupes, drop_empty, strip_ws, agg_func)
-elif "PMAX" in mode:
+elif "Channel" in mode:
     from ui_pmax import render_pmax
     render_pmax()
 else:
