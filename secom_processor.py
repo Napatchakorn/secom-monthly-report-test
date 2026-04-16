@@ -629,16 +629,12 @@ def build_pmax_channel_report(df: pd.DataFrame, strip_suffix: str = "") -> pd.Da
     """
     df = df.copy()
 
-    # Derive Original Name from Campaign
+    # Derive Original Name — use cleaned campaign name directly
     def _campaign_type(c):
         c = re.sub(r'[\u200b\u200c\u200d]', '', str(c)).strip()
+        c = re.sub(r'_WE/SEC\d+', '', c).strip()
         if strip_suffix:
-            c = re.sub(re.escape(strip_suffix), '', c)
-            c = re.sub(r'_WE/SEC\d+', '', c).strip()
-        if 'CONSIDERATION' in c.upper():
-            return 'Campaigns (CONSIDERATION)'
-        if 'CONVERSION' in c.upper():
-            return 'Campaigns (CONVERSION)'
+            c = re.sub(re.escape(strip_suffix), '', c).strip()
         return c
 
     df['Original Name'] = df['Campaigns'].apply(_campaign_type)
