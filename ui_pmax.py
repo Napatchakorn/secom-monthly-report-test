@@ -137,11 +137,6 @@ def render_pmax():
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as w:
             df_out.to_excel(w, index=False, sheet_name="PMAX Channel Report")
-            # Separate sheets by type
-            if not consideration.empty:
-                consideration.to_excel(w, index=False, sheet_name="CONSIDERATION")
-            if not conversion.empty:
-                conversion.to_excel(w, index=False, sheet_name="CONVERSION")
         st.download_button(
             "⬇️ Download Excel",
             buf.getvalue(),
@@ -149,4 +144,4 @@ def render_pmax():
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
-        st.caption("3 sheets: All · CONSIDERATION · CONVERSION")
+        st.caption("All data in one sheet")
