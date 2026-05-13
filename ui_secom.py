@@ -112,25 +112,28 @@ def render_secom():
         st.stop()
 
     # ── Load files ────────────────────────────────────────────────────────────
-    df_meta_raw = df_google_raw = None
+    df_meta_raw = df_google_raw = df_pmx_raw = df_sem_raw = None
 
     if meta_file:
-        try:
-            df_meta_raw = load_meta_ads(meta_file)
-        except Exception as e:
-            st.error(f"❌ Meta Ads load failed: {e}"); st.stop()
+        try: df_meta_raw = load_meta_ads(meta_file)
+        except Exception as e: st.error(f"❌ Meta Ads: {e}"); st.stop()
 
     if google_file:
-        try:
-            df_google_raw = load_google_ads(google_file)
-        except Exception as e:
-            st.error(f"❌ Google Ads load failed: {e}"); st.stop()
+        try: df_google_raw = load_google_ads(google_file)
+        except Exception as e: st.error(f"❌ Google Ads: {e}"); st.stop()
+
+    if pmx_file:
+        try: df_pmx_raw = load_google_pmx(pmx_file)
+        except Exception as e: st.error(f"❌ Google PMX: {e}"); st.stop()
+
+    if sem_file:
+        try: df_sem_raw = load_google_sem(sem_file)
+        except Exception as e: st.error(f"❌ Google SEM: {e}"); st.stop()
 
     try:
         result = load_ga4_session(ga4_file)
         df_ga4_raw, detected_skip = result
-    except Exception as e:
-        st.error(f"❌ GA4 load failed: {e}"); st.stop()
+    except Exception as e: st.error(f"❌ GA4: {e}"); st.stop()
 
     with st.expander("⚙️ GA4 CSV Settings (auto-detected)", expanded=False):
         st.success(f"✅ Header auto-detected at row {detected_skip}")
@@ -139,109 +142,101 @@ def render_secom():
             ga4_file.seek(0)
             df_ga4_raw, _ = load_ga4_session(ga4_file, int(manual_skip))
 
-
     # ── STEP 2: Preview ───────────────────────────────────────────────────────
     _step("02", "Preview Raw Data")
-    preview_tabs = []
-    preview_dfs  = []
-    if df_meta_raw is not None:
-        preview_tabs.append("📗 Meta Ads"); preview_dfs.append(df_meta_raw)
-    if df_google_raw is not None:
-        preview_tabs.append("📙 Google Ads"); preview_dfs.append(df_google_raw)
-    preview_tabs.append("📘 GA4 Session"); preview_dfs.append(df_ga4_raw)
+    tab_labels, tab_dfs = [], []
+    for label, df in [("📗 Meta Ads", df_meta_raw), ("📙 Google YT/DMG/GDN", df_google_raw),
+                       ("📒 Google PMX", df_pmx_raw), ("📓 Google SEM", df_sem_raw),
+                       ("📘 GA4 Session", df_ga4_raw)]:
+        if df is not None:
+            tab_labels.append(label); tab_dfs.append(df)
 
-    tabs = st.tabs(preview_tabs)
-    for tab, df in zip(tabs, preview_dfs):
+    for tab, df in zip(st.tabs(tab_labels), tab_dfs):
         with tab:
             c1, c2 = st.columns(2)
             c1.metric("Rows", f"{len(df):,}")
             c2.metric("Columns", len(df.columns))
-            st.dataframe(df.head(6), use_container_width=True)
+            st.dataframe(df.head(5), use_container_width=True)
 
     # ── STEP 3: Column Mapping ────────────────────────────────────────────────
     _step("03", "Column Mapping")
 
-    mapping_tabs = []
-    if df_meta_raw is not None:   mapping_tabs.append("📗 Meta Ads")
-    if df_google_raw is not None: mapping_tabs.append("📙 Google Ads")
-    mapping_tabs.append("📘 GA4 Session")
+    map_labels = []
+    if df_meta_raw   is not None: map_labels.append("📗 Meta Ads")
+    if df_google_raw is not None: map_labels.append("📙 Google YT/DMG/GDN")
+    if df_pmx_raw    is not None: map_labels.append("📒 Google PMX")
+    if df_sem_raw    is not None: map_labels.append("📓 Google SEM")
+    map_labels.append("📘 GA4 Session")
 
-    map_tab_objs = st.tabs(mapping_tabs)
-    tab_idx = 0
+    meta_mapping = {}; google_mapping = {}; pmx_mapping = {}; ga4_mapping = {}
 
-    meta_mapping   = {}
-    google_mapping = {}
-    ga4_mapping    = {}
+    map_tabs = st.tabs(map_labels)
+    idx = 0
 
-    # Meta Ads mapping
     if df_meta_raw is not None:
-        with map_tab_objs[tab_idx]:
-            tab_idx += 1
+        with map_tabs[idx]:
             meta_cols = list(df_meta_raw.columns)
-            std_names = list(META_ADS_DEFAULT_MAPPING.values())
-            ui_cols = st.columns(3)
+            ui = st.columns(3)
             for i, (raw_def, std_name) in enumerate(META_ADS_DEFAULT_MAPPING.items()):
-                with ui_cols[i % 3]:
-                    default_idx = meta_cols.index(raw_def) + 1 if raw_def in meta_cols else 0
+                with ui[i % 3]:
+                    def_idx = meta_cols.index(raw_def) + 1 if raw_def in meta_cols else 0
                     sel = st.selectbox(f"→ **{std_name}**", ["(skip)"] + meta_cols,
-                                       index=default_idx, key=f"meta_{std_name}")
-                    if sel != "(skip)":
-                        meta_mapping[sel] = std_name
+                                       index=def_idx, key=f"meta_{std_name}_{i}")
+                    if sel != "(skip)": meta_mapping[sel] = std_name
+        idx += 1
 
-    # Google Ads mapping
     if df_google_raw is not None:
-        with map_tab_objs[tab_idx]:
-            tab_idx += 1
+        with map_tabs[idx]:
             google_cols = list(df_google_raw.columns)
-            ui_cols = st.columns(3)
+            ui = st.columns(3)
             for i, (raw_def, std_name) in enumerate(GOOGLE_ADS_DEFAULT_MAPPING.items()):
-                with ui_cols[i % 3]:
-                    default_idx = google_cols.index(raw_def) + 1 if raw_def in google_cols else 0
+                with ui[i % 3]:
+                    def_idx = google_cols.index(raw_def) + 1 if raw_def in google_cols else 0
                     sel = st.selectbox(f"→ **{std_name}**", ["(skip)"] + google_cols,
-                                       index=default_idx, key=f"google_{std_name}")
-                    if sel != "(skip)":
-                        google_mapping[sel] = std_name
-            st.caption("ℹ️ For GDN campaigns, **Ad** will auto-extract from `utm_term=` in Final URL when Ad name is empty.")
+                                       index=def_idx, key=f"google_{std_name}_{i}")
+                    if sel != "(skip)": google_mapping[sel] = std_name
+            st.caption("ℹ️ GDN campaigns auto-extract Ad from utm_term= in Final URL.")
+        idx += 1
 
-    # GA4 mapping
-    with map_tab_objs[tab_idx]:
+    if df_pmx_raw is not None:
+        with map_tabs[idx]:
+            st.info("ℹ️ PMX is an asset-group level report. Campaign Name auto-extracted.")
+            pmx_cols = list(df_pmx_raw.columns)
+            ui = st.columns(3)
+            for i, (raw_def, std_name) in enumerate(GOOGLE_PMX_DEFAULT_MAPPING.items()):
+                with ui[i % 3]:
+                    def_idx = pmx_cols.index(raw_def) + 1 if raw_def in pmx_cols else 0
+                    sel = st.selectbox(f"→ **{std_name}**", ["(skip)"] + pmx_cols,
+                                       index=def_idx, key=f"pmx_{std_name}_{i}")
+                    if sel != "(skip)": pmx_mapping[sel] = std_name
+        idx += 1
+
+    if df_sem_raw is not None:
+        with map_tabs[idx]:
+            st.info("ℹ️ SEM is an ad-group level report. Campaign Name auto-extracted from combined column.")
+        idx += 1
+
+    with map_tabs[idx]:
         ga4_cols = list(df_ga4_raw.columns)
-        ui_cols  = st.columns(3)
+        ui = st.columns(3)
         for i, (raw_def, std_name) in enumerate(GA4_DEFAULT_MAPPING.items()):
-            with ui_cols[i % 3]:
-                default_idx = ga4_cols.index(raw_def) + 1 if raw_def in ga4_cols else 0
+            with ui[i % 3]:
+                def_idx = ga4_cols.index(raw_def) + 1 if raw_def in ga4_cols else 0
                 sel = st.selectbox(f"→ **{std_name}**", ["(skip)"] + ga4_cols,
-                                   index=default_idx, key=f"ga4_{std_name}")
-                if sel != "(skip)":
-                    ga4_mapping[sel] = std_name
+                                   index=def_idx, key=f"ga4_{std_name}_{i}")
+                if sel != "(skip)": ga4_mapping[sel] = std_name
 
-    # ── STEP 4: Campaign Name Cleaner ─────────────────────────────────────────
+    # ── STEP 4: Campaign Cleaner ───────────────────────────────────────────────
     _step("04", "Campaign Name Cleaner")
-    c1, c2 = st.columns([2, 1])
+    c1, _ = st.columns([2, 1])
     with c1:
         strip_suffix = st.text_input(
-            "Remove this suffix from Campaign Name (both Meta Ads & Google Ads)",
+            "Remove this suffix from Campaign Name (all sources)",
             value="_WE/SEC26018",
-            help="Must be stripped so campaign names match GA4. Also handles truncated variants like _WE/SEC2601.",
+            help="Applied to Meta Ads and Google Ads. SEM also auto-strips via regex.",
         )
         if not strip_suffix.strip():
-            st.warning("⚠️ Suffix is empty — Campaign Names won't match GA4. Recommended: `_WE/SEC26018`")
-    with c2:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("👁 Preview"):
-            samples = []
-            if df_meta_raw is not None and "Campaign name" in df_meta_raw.columns:
-                from secom_processor import _strip_suffix
-                s = df_meta_raw["Campaign name"].astype(str).apply(
-                    lambda x: _strip_suffix(x, strip_suffix)).drop_duplicates().head(4).tolist()
-                samples += [f"[Meta] {x}" for x in s]
-            if df_google_raw is not None and "Campaign" in df_google_raw.columns:
-                from secom_processor import _strip_suffix, _clean_str
-                s = df_google_raw["Campaign"].astype(str).apply(
-                    lambda x: _strip_suffix(_clean_str(x), strip_suffix)).drop_duplicates().head(4).tolist()
-                samples += [f"[Google] {x}" for x in s]
-            for s in samples:
-                st.caption(f"• {s}")
+            st.warning("⚠️ Suffix is empty — Campaign Names may not match GA4.")
 
     # ── RUN ───────────────────────────────────────────────────────────────────
     run_col, _ = st.columns([1, 3])
@@ -255,24 +250,18 @@ def render_secom():
     if run_btn:
         with st.spinner("Processing…"):
             try:
-                # Build individual source reports
-                df_meta_report   = build_meta_report(df_meta_raw, meta_mapping, strip_suffix) if df_meta_raw is not None else None
-                df_google_report = build_google_report(df_google_raw, google_mapping, strip_suffix) if df_google_raw is not None else None
-                df_ga4_report    = build_ga4_report(df_ga4_raw, ga4_mapping)
+                df_meta_rep   = build_meta_report(df_meta_raw, meta_mapping, strip_suffix) if df_meta_raw is not None else None
+                df_google_rep = build_google_report(df_google_raw, google_mapping, strip_suffix) if df_google_raw is not None else None
+                df_pmx_rep    = build_google_pmx_report(df_pmx_raw, pmx_mapping, strip_suffix) if df_pmx_raw is not None else None
+                df_sem_rep    = build_google_sem_report(df_sem_raw, {}, strip_suffix) if df_sem_raw is not None else None
+                df_ga4_rep    = build_ga4_report(df_ga4_raw, ga4_mapping)
 
-                # Combine ad sources
-                df_combined = combine_ad_sources(df_meta_report, df_google_report)
+                df_combined = combine_ad_sources(df_meta_rep, df_google_rep, df_pmx_rep, df_sem_rep)
+                df_merged   = merge_reports(df_combined, df_ga4_rep)
+                qa          = qa_report(df_merged, len(df_combined))
+                df_final    = finalize_master(df_merged)
 
-                # Merge with GA4
-                df_merged = merge_reports(df_combined, df_ga4_report)
-                qa        = qa_report(df_merged, len(df_combined))
-                df_final  = finalize_master(df_merged)
-
-                st.session_state["secom_result"] = {
-                    "final": df_final, "qa": qa,
-                    "meta_rows":   len(df_meta_report)   if df_meta_report   is not None else 0,
-                    "google_rows": len(df_google_report) if df_google_report is not None else 0,
-                }
+                st.session_state["secom_result"] = {"final": df_final, "qa": qa}
             except Exception as e:
                 st.error(f"❌ Pipeline error: {e}")
                 import traceback; st.code(traceback.format_exc())
@@ -288,93 +277,82 @@ def render_secom():
     # ── STEP 5: Source Summary ────────────────────────────────────────────────
     _step("05", "Source Summary")
     src_counts = df_final.groupby("Report Source").size().reset_index(name="Rows")
-    s_cols = st.columns(len(src_counts) + 1)
+    cols = st.columns(len(src_counts) + 1)
     for i, row in src_counts.iterrows():
-        s_cols[i].markdown(
+        cols[i].markdown(
             f'<div class="metric-card"><div class="metric-val">{row["Rows"]}</div>'
             f'<div class="metric-lbl">{row["Report Source"]}</div></div>',
             unsafe_allow_html=True,
         )
-    s_cols[-1].markdown(
+    cols[-1].markdown(
         f'<div class="metric-card"><div class="metric-val">{len(df_final):,}</div>'
         f'<div class="metric-lbl">Total Rows</div></div>',
         unsafe_allow_html=True,
     )
 
-    # ── STEP 6: Merge QA Check ────────────────────────────────────────────────
+    # ── STEP 6: QA Check ─────────────────────────────────────────────────────
     _step("06", "Merge Quality Check")
-    qa_cols = st.columns(4)
-    qa_cols[0].metric("Total Rows",      f"{qa['total']:,}")
-    qa_cols[1].metric("Matched with GA4", f"{qa['matched']:,}")
-    qa_cols[2].metric("Unmatched",        f"{qa['unmatched']:,}")
-    qa_cols[3].metric("Match Rate",       f"{qa['match_pct']}%")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total Rows",       f"{qa['total']:,}")
+    c2.metric("Matched with GA4", f"{qa['matched']:,}")
+    c3.metric("Unmatched",        f"{qa['unmatched']:,}")
+    c4.metric("Match Rate",       f"{qa['match_pct']}%")
 
-    bar_color = "#16a34a" if qa['match_pct'] >= 70 else "#f59e0b" if qa['match_pct'] >= 40 else "#ef4444"
+    bar_color = "#16a34a" if qa["match_pct"] >= 70 else "#f59e0b" if qa["match_pct"] >= 40 else "#ef4444"
     st.markdown(
-        f'<div style="display:flex;align-items:center;gap:10px;margin:8px 0 12px">'
+        f'<div style="display:flex;align-items:center;gap:10px;margin:8px 0 12px">' 
         f'<div class="qa-bar-outer" style="flex:1"><div class="qa-bar-inner" '
         f'style="width:{int(qa["match_pct"])}%;background:{bar_color}"></div></div>'
         f'<span class="qa-pct" style="color:{bar_color}">{qa["match_pct"]}%</span></div>',
         unsafe_allow_html=True,
     )
-    if qa['match_pct'] < 70:
-        st.warning("⚠️ Low match rate — check Step 03 GA4 column mapping or Step 04 suffix cleaner.")
+    if qa["match_pct"] < 70:
+        st.warning("⚠️ Low match rate. Check Step 03 column mapping and Step 04 suffix.")
 
-    if qa['unmatched'] > 0 and not qa["unmatched_rows"].empty:
+    if qa["unmatched"] > 0 and not qa["unmatched_rows"].empty:
         with st.expander(f"🔍 Unmatched rows ({qa['unmatched']})", expanded=False):
             st.dataframe(qa["unmatched_rows"], use_container_width=True)
 
     # ── STEP 7: Preview ───────────────────────────────────────────────────────
     _step("07", "Preview Master Report")
     p1, p2, p3, p4 = st.columns(4)
-    p1.metric("Rows",           f"{len(df_final):,}")
-    p2.metric("Columns",        len(df_final.columns))
-    p3.metric("Total Cost",     f"{pd.to_numeric(df_final.get('Cost', pd.Series(dtype=float)), errors='coerce').sum():,.0f}")
-    p4.metric("Total Leads",    f"{pd.to_numeric(df_final.get('Leads', pd.Series(dtype=float)), errors='coerce').sum():,.0f}")
+    p1.metric("Rows",        f"{len(df_final):,}")
+    p2.metric("Columns",     len(df_final.columns))
+    p3.metric("Total Cost",  f"{pd.to_numeric(df_final.get('Cost',  pd.Series(dtype=float)), errors='coerce').sum():,.0f}")
+    p4.metric("Total Leads", f"{pd.to_numeric(df_final.get('Leads', pd.Series(dtype=float)), errors='coerce').sum():,.0f}")
     st.dataframe(df_final, use_container_width=True, height=320)
 
     # ── STEP 8: Download ──────────────────────────────────────────────────────
     _step("08", "Download Results")
-    dl1, dl2, dl3 = st.columns(3)
+    dl1, dl2 = st.columns(2)
 
     with dl1:
         csv = df_final.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button("⬇️ Download CSV", csv,
-                           "master_monthly_report.csv", "text/csv",
-                           use_container_width=True)
+        st.download_button("⬇️ Download CSV", csv, "master_monthly_report.csv", "text/csv", use_container_width=True)
         st.caption("UTF-8 BOM — Excel-safe")
 
     with dl2:
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as w:
             df_final.to_excel(w, index=False, sheet_name="Master Report")
-            qa_df = pd.DataFrame({
+            pd.DataFrame({
                 "Metric": ["Total", "Matched", "Unmatched", "Match %"],
                 "Value":  [qa["total"], qa["matched"], qa["unmatched"], qa["match_pct"]],
-            })
-            qa_df.to_excel(w, index=False, sheet_name="QA Summary")
-        st.download_button("⬇️ Download Excel", buf.getvalue(),
-                           "master_monthly_report.xlsx",
+            }).to_excel(w, index=False, sheet_name="QA Summary")
+        st.download_button("⬇️ Download Excel", buf.getvalue(), "master_monthly_report.xlsx",
                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                            use_container_width=True)
         st.caption("Includes QA Summary sheet")
 
-    with dl3:
-        if qa["unmatched"] > 0 and not qa["unmatched_rows"].empty:
-            st.download_button("⬇️ Unmatched Rows",
-                               qa["unmatched_rows"].to_csv(index=False).encode("utf-8-sig"),
-                               "unmatched.csv", "text/csv", use_container_width=True)
-            st.caption(f"{qa['unmatched']} rows without GA4 data")
-        else:
-            st.markdown('<br><span class="pill-ok">✓ All rows matched</span>', unsafe_allow_html=True)
-
 
 def _render_help():
-    with st.expander("ℹ️ File naming tips for auto-detection", expanded=False):
+    with st.expander("ℹ️ File naming tips", expanded=False):
         st.markdown("""
 | File | Include in filename |
 |------|-------------------|
 | Meta Ads `.xlsx` | `meta` or `facebook` |
-| Google Ads `.csv` | `youtube`, `yt`, `dmg`, `gdn`, or `google_ads` |
+| Google YT/DMG/GDN `.csv` | `youtube`, `dmg`, `gdn` |
+| Google PMX `.csv` | `pmx` or `pmax` |
+| Google SEM `.csv` | `sem` |
 | GA4 Session `.csv` | `ga4` or `session` |
         """)
