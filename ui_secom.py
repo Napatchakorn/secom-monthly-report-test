@@ -49,6 +49,8 @@ def render_secom():
     # ── Auto-detect files ─────────────────────────────────────────────────────
     meta_file   = None
     google_file = None
+    pmx_file    = None
+    sem_file    = None
     ga4_file    = None
 
     for f in uploaded:
