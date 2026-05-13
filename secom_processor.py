@@ -105,16 +105,11 @@ def _detect_google_source(campaign: str) -> str:
     return 'Google Ads'
 
 def _strip_suffix(value: str, suffix: str) -> str:
-    """Strip suffix pattern; also handles zero-width spaces and regex variant."""
-    if not suffix:
-        return value
-    # Also strip zero-width spaces around the suffix
+    """Strip exactly the suffix the user typed. Zero-width spaces cleaned first."""
     cleaned = re.sub(r'[\u200b\u200c\u200d]', '', value)
-    # Use regex to handle truncated suffix variants (e.g. _WE/SEC2601 vs _WE/SEC26018)
-    escaped = re.escape(suffix)
-    cleaned = re.sub(escaped, '', cleaned)
-    # Fallback: strip _WE/SEC followed by any digits
-    cleaned = re.sub(r'_WE/SEC\d+', '', cleaned)
+    if not suffix:
+        return cleaned.strip()
+    cleaned = re.sub(re.escape(suffix.strip()), '', cleaned)
     return cleaned.strip()
 
 
@@ -171,9 +166,19 @@ def load_google_ads(uploaded_file) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def load_ga4_session(uploaded_file, skiprows: int = 6) -> pd.DataFrame:
+def _detect_skiprows(text: str, header_keywords: list) -> int:
+    """Auto-detect how many rows to skip by finding the header row."""
+    lines = text.split("\n")
+    for i, line in enumerate(lines[:20]):
+        if any(kw.lower() in line.lower() for kw in header_keywords):
+            return i
+    return 0  # fallback: no skip
+
+
+def load_ga4_session(uploaded_file, skiprows: int = None) -> pd.DataFrame:
     """
     Load GA4 Session CSV.
+    Auto-detects skiprows by finding the header line containing 'Session manual campaign name'.
     Pre-strips 'Grand total' row to prevent pandas column-shift bug.
     """
     raw = uploaded_file.read()
@@ -193,6 +198,10 @@ def load_ga4_session(uploaded_file, skiprows: int = 6) -> pd.DataFrame:
             "Fix: open the file in Excel → Save As → CSV UTF-8 (Comma delimited) → re-upload."
         )
 
+    # Auto-detect skiprows if not provided
+    if skiprows is None:
+        skiprows = _detect_skiprows(text, ["Session manual campaign name", "session_manual_campaign"])
+
     clean_lines = [line for line in text.split("\n") if "Grand total" not in line]
     clean_bytes  = "\n".join(clean_lines).encode("utf-8")
 
@@ -205,12 +214,12 @@ def load_ga4_session(uploaded_file, skiprows: int = 6) -> pd.DataFrame:
     if df.empty or len(df.columns) < 2:
         raise ValueError(
             f"GA4 CSV loaded with only {len(df.columns)} column(s). "
-            f"Try adjusting 'Skip rows' (currently {skiprows})."
+            f"skiprows detected as {skiprows} — try adjusting manually in GA4 settings."
         )
 
     df = df[df.iloc[:, 0].notna()].copy()
     df = df[df.iloc[:, 0].astype(str).str.strip() != ""].reset_index(drop=True)
-    return df
+    return df, skiprows  # return detected skiprows so UI can show it
 
 
 # ── Transformers ─────────────────────────────────────────────────────────────
@@ -320,13 +329,64 @@ def combine_ad_sources(*report_dfs) -> pd.DataFrame:
 
 
 def merge_reports(combined_df, ga4_df):
-    """Left join combined ad sources with GA4 on [Campaign Name, Ad Group, Ad]."""
-    return pd.merge(
-        combined_df, ga4_df,
-        on=["Campaign Name", "Ad Group", "Ad"],
-        how="left",
-        suffixes=("", "_ga4"),
-    )
+    """
+    Hierarchical left join: tries 3 levels of specificity.
+    Level 1: Campaign Name + Ad Group + Ad  (exact)
+    Level 2: Campaign Name + Ad Group       (for ad-group level reports like SEM)
+    Level 3: Campaign Name only             (fallback)
+    Unmatched rows from Level 1 are retried at Level 2/3.
+    """
+    GA4_COLS = ["GA4 | Sessions", "GA4 | Avg. Session Duration", "Bounce rate%"]
+
+    # Pre-aggregate GA4 at each level
+    def _agg(df, keys):
+        num = [c for c in GA4_COLS if c in df.columns]
+        agg_dict = {c: "sum" if "Sessions" in c else "mean" for c in num}
+        return df.groupby(keys, dropna=False).agg(agg_dict).reset_index()
+
+    ga4_l1 = ga4_df.copy()  # Campaign + Ad Group + Ad
+    ga4_l2 = _agg(ga4_df, ["Campaign Name", "Ad Group"])  # Campaign + Ad Group
+    ga4_l3 = _agg(ga4_df, ["Campaign Name"])              # Campaign only
+
+    # Level 1: exact merge
+    merged = pd.merge(combined_df, ga4_l1,
+                      on=["Campaign Name", "Ad Group", "Ad"],
+                      how="left", suffixes=("", "_ga4"))
+
+    # Identify unmatched rows (GA4 Sessions is NaN)
+    sess_col = "GA4 | Sessions"
+    if sess_col not in merged.columns:
+        merged[sess_col] = None
+
+    unmatched_mask = merged[sess_col].isna()
+
+    # Level 2: Campaign + Ad Group fallback
+    if unmatched_mask.any():
+        unmatched_idx = merged.index[unmatched_mask]
+        sub = combined_df.loc[unmatched_idx].copy()
+        filled_l2 = pd.merge(sub, ga4_l2,
+                             on=["Campaign Name", "Ad Group"],
+                             how="left", suffixes=("", "_ga4"))
+        ga4_num_cols = [c for c in GA4_COLS if c in filled_l2.columns]
+        for col in ga4_num_cols:
+            if filled_l2[col].notna().any():
+                merged.loc[unmatched_idx, col] = filled_l2[col].values
+
+    # Level 3: Campaign only fallback (still unmatched)
+    still_unmatched = merged[sess_col].isna()
+    if still_unmatched.any():
+        unmatched_idx = merged.index[still_unmatched]
+        sub = combined_df.loc[unmatched_idx].copy()
+        filled_l3 = pd.merge(sub, ga4_l3,
+                             on=["Campaign Name"],
+                             how="left", suffixes=("", "_ga4"))
+        ga4_num_cols = [c for c in GA4_COLS if c in filled_l3.columns]
+        for col in ga4_num_cols:
+            if filled_l3[col].notna().any():
+                merged.loc[unmatched_idx, col] = filled_l3[col].values
+
+    return merged
+
 
 
 # ── Finalize ─────────────────────────────────────────────────────────────────
@@ -446,20 +506,24 @@ def load_google_pmx(uploaded_file) -> pd.DataFrame:
 
 
 def load_google_sem(uploaded_file) -> pd.DataFrame:
-    """Load Google SEM Ad group report CSV. UTF-16 tab, skiprows=2."""
+    """
+    Load Google SEM Ad group report CSV. UTF-16 tab-delimited.
+    Auto-detects skiprows by finding the header row containing 'Ad group status'.
+    """
     raw = uploaded_file.read()
     uploaded_file.seek(0)
 
     for enc in ['utf-16', 'utf-16-le']:
         try:
+            text = raw.decode(enc)
+            # Auto-detect skiprows
+            skip = _detect_skiprows(text, ['Ad group status', 'Ad group\t', 'ad group'])
             df = pd.read_csv(io.BytesIO(raw), encoding=enc, sep='\t',
-                             skiprows=2, on_bad_lines='skip', dtype=str)
+                             skiprows=skip, on_bad_lines='skip', dtype=str)
             if len(df.columns) > 5:
                 df.columns = [str(c).strip() for c in df.columns]
-                # Drop totals rows: "Total: Display", "Total: Search", etc.
                 if 'Ad group status' in df.columns:
                     df = df[~df['Ad group status'].astype(str).str.startswith('Total')]
-                # Drop rows where Campaign is NaN
                 if 'Campaign' in df.columns:
                     df = df[df['Campaign'].notna()]
                     df = df[~df['Campaign'].astype(str).str.strip().isin(['--', '-', '', 'nan'])]
@@ -472,14 +536,17 @@ def load_google_sem(uploaded_file) -> pd.DataFrame:
 def _extract_sem_campaign_name(campaign_raw: str, ad_group: str) -> str:
     """
     Extract clean campaign name from SEM Campaign column.
-    Format: {CampaignName}​​-{AdGroup}_WE/SEC26018
+    Strategy: strip _WE/SEC suffix, then strip trailing -Keyword from campaign name.
+    e.g. SECOM_SEM_B2B_CONSIDERATION_CLICK-AccessControl_WE/SEC26022
+         -> SECOM_SEM_B2B_CONSIDERATION_CLICK
+    Works independently of ad group name.
     """
-    camp = re.sub(r'[\u200b\u200c\u200d]', '', str(campaign_raw)).strip()
-    camp = re.sub(r'_WE/SEC\d+', '', camp).strip()
-    if ad_group and ad_group not in ('nan', ''):
-        camp = re.sub(r'-?' + re.escape(str(ad_group)) + r'$', '', camp).strip('-').strip()
+    camp = re.sub(r"[\u200b\u200c\u200d]", "", str(campaign_raw)).strip()
+    camp = re.sub(r"_WE/SEC\d+", "", camp).strip()
+    # Strip trailing -Keyword pattern (e.g. -AccessControl, -Security, -CameraSystem)
+    # Keyword = CamelCase or single word with no underscores
+    camp = re.sub(r"-[A-Za-z][A-Za-z0-9]*$", "", camp).strip()
     return camp
-
 
 def build_google_pmx_report(df, col_mapping=None, strip_suffix=""):
     """
@@ -658,10 +725,19 @@ def build_pmax_channel_report(df: pd.DataFrame, strip_suffix: str = "") -> pd.Da
         'Report Source': df['Report Source'],
         'Original Name': df['Original Name'],
         'Channel':       df['Channels'] if 'Channels' in df.columns else '',
-        'Impressions':   df['Impr.'] if 'Impr.' in df.columns else 0,
-        'Clicks':        df['Clicks'] if 'Clicks' in df.columns else 0,
-        'Cost':          df['Cost'] if 'Cost' in df.columns else 0,
+        'Impressions':   df['Impr.'].apply(_clean_number) if 'Impr.' in df.columns else 0,
+        'Clicks':        df['Clicks'].apply(_clean_number) if 'Clicks' in df.columns else 0,
+        'Cost':          df['Cost'].apply(_clean_number) if 'Cost' in df.columns else 0,
         'Conversions':   df['Conversions'],
     })
 
-    return out.reset_index(drop=True)
+    # Group by campaign — sum all numeric columns, collapse Channel to "All channels"
+    out = out.groupby(['Report Source', 'Original Name'], sort=False).agg(
+        Channel=('Channel', lambda x: 'All channels'),
+        Impressions=('Impressions', 'sum'),
+        Clicks=('Clicks', 'sum'),
+        Cost=('Cost', 'sum'),
+        Conversions=('Conversions', 'sum'),
+    ).reset_index()
+
+    return out
