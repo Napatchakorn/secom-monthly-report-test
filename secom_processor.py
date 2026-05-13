@@ -330,66 +330,43 @@ def combine_ad_sources(*report_dfs) -> pd.DataFrame:
 
 def merge_reports(combined_df, ga4_df):
     """
-    Hierarchical left join: tries 3 levels of specificity.
-    Level 1: Campaign Name + Ad Group + Ad  (exact)
-    Level 2: Campaign Name + Ad Group       (for ad-group level reports like SEM)
-    Level 3: Campaign Name only             (fallback)
-    Unmatched rows from Level 1 are retried at Level 2/3.
+    Hierarchical left join — 2 levels:
+    Level 1: Campaign + Ad Group + Ad  (exact — Meta/DMG/YT)
+    Level 2: Campaign + Ad Group       (fallback — SEM/PMX, no ad-level data)
+    No Level 3 to prevent session inflation.
     """
     GA4_COLS = ["GA4 | Sessions", "GA4 | Avg. Session Duration", "Bounce rate%"]
 
-    # Pre-aggregate GA4 at each level
     def _agg(df, keys):
         num = [c for c in GA4_COLS if c in df.columns]
         agg_dict = {c: "sum" if "Sessions" in c else "mean" for c in num}
         return df.groupby(keys, dropna=False).agg(agg_dict).reset_index()
 
-    ga4_l1 = ga4_df.copy()  # Campaign + Ad Group + Ad
-    ga4_l2 = _agg(ga4_df, ["Campaign Name", "Ad Group"])  # Campaign + Ad Group
-    ga4_l3 = _agg(ga4_df, ["Campaign Name"])              # Campaign only
+    ga4_l1 = ga4_df.copy()
+    ga4_l2 = _agg(ga4_df, ["Campaign Name", "Ad Group"])
 
-    # Level 1: exact merge
+    # Level 1: exact
     merged = pd.merge(combined_df, ga4_l1,
                       on=["Campaign Name", "Ad Group", "Ad"],
                       how="left", suffixes=("", "_ga4"))
 
-    # Identify unmatched rows (GA4 Sessions is NaN)
     sess_col = "GA4 | Sessions"
     if sess_col not in merged.columns:
         merged[sess_col] = None
 
-    unmatched_mask = merged[sess_col].isna()
-
     # Level 2: Campaign + Ad Group fallback
+    unmatched_mask = merged[sess_col].isna()
     if unmatched_mask.any():
         unmatched_idx = merged.index[unmatched_mask]
         sub = combined_df.loc[unmatched_idx].copy()
-        filled_l2 = pd.merge(sub, ga4_l2,
-                             on=["Campaign Name", "Ad Group"],
-                             how="left", suffixes=("", "_ga4"))
-        ga4_num_cols = [c for c in GA4_COLS if c in filled_l2.columns]
-        for col in ga4_num_cols:
-            if filled_l2[col].notna().any():
-                merged.loc[unmatched_idx, col] = filled_l2[col].values
-
-    # Level 3: Campaign only fallback (still unmatched)
-    still_unmatched = merged[sess_col].isna()
-    if still_unmatched.any():
-        unmatched_idx = merged.index[still_unmatched]
-        sub = combined_df.loc[unmatched_idx].copy()
-        filled_l3 = pd.merge(sub, ga4_l3,
-                             on=["Campaign Name"],
-                             how="left", suffixes=("", "_ga4"))
-        ga4_num_cols = [c for c in GA4_COLS if c in filled_l3.columns]
-        for col in ga4_num_cols:
-            if filled_l3[col].notna().any():
-                merged.loc[unmatched_idx, col] = filled_l3[col].values
+        filled = pd.merge(sub, ga4_l2,
+                          on=["Campaign Name", "Ad Group"],
+                          how="left", suffixes=("", "_ga4"))
+        for col in [c for c in GA4_COLS if c in filled.columns]:
+            merged.loc[unmatched_idx, col] = filled[col].values
 
     return merged
 
-
-
-# ── Finalize ─────────────────────────────────────────────────────────────────
 
 def finalize_master(df):
     """Select output columns, convert types, fill NaN."""
