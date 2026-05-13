@@ -55,9 +55,13 @@ def render_secom():
         name = f.name.lower()
         if any(k in name for k in ["meta", "facebook"]) and name.endswith((".xlsx", ".xls")):
             meta_file = meta_file or f
-        elif any(k in name for k in ["youtube", "yt", "dmg", "gdn", "google_ads", "google-ads"]) and name.endswith(".csv"):
+        elif any(k in name for k in ["pmx", "pmax"]) and name.endswith(".csv"):
+            pmx_file = pmx_file or f
+        elif any(k in name for k in ["sem"]) and name.endswith(".csv"):
+            sem_file = sem_file or f
+        elif any(k in name for k in ["youtube", "_yt_", "dmg", "gdn", "google_ads"]) and name.endswith(".csv"):
             google_file = google_file or f
-        elif any(k in name for k in ["ga4", "session", "google-analytics"]) and name.endswith(".csv"):
+        elif any(k in name for k in ["ga4", "session"]) and name.endswith(".csv"):
             ga4_file = ga4_file or f
         elif name.endswith((".xlsx", ".xls")) and meta_file is None:
             meta_file = f
