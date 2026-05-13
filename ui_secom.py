@@ -72,28 +72,18 @@ def render_secom():
 
     # Show detection
     st.markdown("**File Detection:**")
-    col_a, col_b, col_c = st.columns(3)
-    with col_a:
-        st.markdown(
-            f'<div class="file-row"><span>📗</span>'
-            f'<span class="key">Meta Ads</span>'
-            f'<span class="ml">{_pill(meta_file.name[:20] if meta_file else "Missing", bool(meta_file))}</span></div>',
-            unsafe_allow_html=True,
-        )
-    with col_b:
-        st.markdown(
-            f'<div class="file-row"><span>📙</span>'
-            f'<span class="key">Google Ads</span>'
-            f'<span class="ml">{_pill(google_file.name[:20] if google_file else "Optional", True)}</span></div>',
-            unsafe_allow_html=True,
-        )
-    with col_c:
-        st.markdown(
-            f'<div class="file-row"><span>📘</span>'
-            f'<span class="key">GA4 Session</span>'
-            f'<span class="ml">{_pill(ga4_file.name[:20] if ga4_file else "Missing", bool(ga4_file))}</span></div>',
-            unsafe_allow_html=True,
-        )
+    r1c1, r1c2, r1c3 = st.columns(3)
+    r2c1, r2c2, r2c3 = st.columns(3)
+    with r1c1:
+        _file_row("📗", "Meta Ads",            meta_file,   optional=True)
+    with r1c2:
+        _file_row("📙", "Google YT/DMG/GDN",   google_file, optional=True)
+    with r1c3:
+        _file_row("📘", "GA4 Session",          ga4_file,    optional=False)
+    with r2c1:
+        _file_row("📒", "Google PMX",           pmx_file,    optional=True)
+    with r2c2:
+        _file_row("📓", "Google SEM",           sem_file,    optional=True)
 
     if not meta_file and not google_file:
         st.error("Need at least one ad source file: Meta Ads (.xlsx) or Google Ads (.csv).")
