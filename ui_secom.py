@@ -8,11 +8,12 @@ import streamlit as st
 import pandas as pd
 
 from secom_processor import (
-    load_meta_ads, load_google_ads, load_ga4_session,
-    build_meta_report, build_google_report, build_ga4_report,
-    combine_ad_sources, merge_reports, finalize_master, qa_report,
-    META_ADS_DEFAULT_MAPPING, GOOGLE_ADS_DEFAULT_MAPPING, GA4_DEFAULT_MAPPING,
-    OUTPUT_COLUMNS,
+    load_meta_ads, load_google_ads, load_google_pmx, load_google_sem, load_ga4_session,
+    build_meta_report, build_google_report, build_google_pmx_report, build_google_sem_report,
+    build_ga4_report, combine_ad_sources, merge_reports, finalize_master, qa_report,
+    META_ADS_DEFAULT_MAPPING, GOOGLE_ADS_DEFAULT_MAPPING,
+    GOOGLE_PMX_DEFAULT_MAPPING, GOOGLE_SEM_DEFAULT_MAPPING,
+    GA4_DEFAULT_MAPPING, OUTPUT_COLUMNS,
 )
 
 
@@ -28,6 +29,24 @@ def _step(n, title):
 def _pill(label, ok=True):
     cls = "pill-ok" if ok else "pill-err"
     return f'<span class="{cls}">{"✓" if ok else "✗"} {label}</span>'
+
+
+def _file_row(icon, label, f, optional=False):
+    if f:
+        badge = '<span class="pill-ok">✓ Detected</span>'
+        fname = f'<span style="font-family:monospace;font-size:0.78rem;color:#2563eb;margin-left:8px">{f.name[:25]}</span>'
+    elif optional:
+        badge = '<span class="pill-warn">– Optional</span>'
+        fname = ""
+    else:
+        badge = '<span class="pill-err">✗ Missing</span>'
+        fname = ""
+    st.markdown(
+        f'<div class="file-row"><span>{icon}</span>'
+        f'<span class="key" style="min-width:140px">{label}</span>'
+        f'{fname}<span class="ml">{badge}</span></div>',
+        unsafe_allow_html=True,
+    )
 
 
 def render_secom():
