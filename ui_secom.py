@@ -11,6 +11,7 @@ from secom_processor import (
     load_meta_ads, load_google_ads, load_google_pmx, load_google_sem, load_ga4_session,
     build_meta_report, build_google_report, build_google_pmx_report, build_google_sem_report,
     build_ga4_report, combine_ad_sources, merge_reports, finalize_master, qa_report,
+    detect_campaign_suffix,
     META_ADS_DEFAULT_MAPPING, GOOGLE_ADS_DEFAULT_MAPPING,
     GOOGLE_PMX_DEFAULT_MAPPING, GOOGLE_SEM_DEFAULT_MAPPING,
     GA4_DEFAULT_MAPPING, OUTPUT_COLUMNS,
@@ -228,15 +229,48 @@ def render_secom():
 
     # ── STEP 4: Campaign Cleaner ───────────────────────────────────────────────
     _step("04", "Campaign Name Cleaner")
-    c1, _ = st.columns([2, 1])
-    with c1:
-        strip_suffix = st.text_input(
-            "Remove this suffix from Campaign Name (all sources)",
-            value="_WE/SEC26018",
-            help="Applied to Meta Ads and Google Ads. SEM also auto-strips via regex.",
-        )
-        if not strip_suffix.strip():
-            st.warning("⚠️ Suffix is empty — Campaign Names may not match GA4.")
+
+    # Auto-detect suffixes from all loaded raw files
+    detected_suffixes = detect_campaign_suffix([df_meta_raw, df_google_raw, df_pmx_raw, df_sem_raw])
+
+    st.caption("Suffixes detected from your files — each will be stripped from Campaign Names.")
+
+    # One input row per detected suffix (plus one blank for manual add)
+    suffix_list = list(detected_suffixes.keys()) if detected_suffixes else ["_WE/SEC26018"]
+
+    strip_suffixes = []
+    for i, default_val in enumerate(suffix_list):
+        count = detected_suffixes.get(default_val, 0)
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            val = st.text_input(
+                f"Suffix {i+1}",
+                value=default_val,
+                key=f"suffix_{i}",
+                label_visibility="collapsed",
+                placeholder="e.g. _WE/SEC26018",
+            )
+        with c2:
+            st.markdown(
+                f'<div style="padding:8px 0;font-size:0.8rem;color:#64748b">found {count}×</div>',
+                unsafe_allow_html=True,
+            )
+        if val.strip():
+            strip_suffixes.append(val.strip())
+
+    # Extra row to add a custom suffix manually
+    extra = st.text_input("+ Add another suffix (optional)", value="",
+                          key="suffix_extra", placeholder="e.g. _WE/SEC26022")
+    if extra.strip():
+        strip_suffixes.append(extra.strip())
+
+    if not strip_suffixes:
+        st.warning("⚠️ No suffixes set — Campaign Names may not match GA4.")
+    else:
+        st.caption(f"Will strip: {' | '.join(strip_suffixes)}")
+
+    # Use list for strip_suffix throughout pipeline
+    strip_suffix = strip_suffixes
 
     # ── RUN ───────────────────────────────────────────────────────────────────
     run_col, _ = st.columns([1, 3])
