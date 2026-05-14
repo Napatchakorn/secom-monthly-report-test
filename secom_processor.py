@@ -104,13 +104,43 @@ def _detect_google_source(campaign: str) -> str:
         return 'Google GDN'
     return 'Google Ads'
 
-def _strip_suffix(value: str, suffix: str) -> str:
-    """Strip exactly the suffix the user typed. Zero-width spaces cleaned first."""
-    cleaned = re.sub(r'[\u200b\u200c\u200d]', '', value)
-    if not suffix:
-        return cleaned.strip()
-    cleaned = re.sub(re.escape(suffix.strip()), '', cleaned)
+def _strip_suffix(value: str, suffix) -> str:
+    """
+    Strip one or more suffixes. Zero-width spaces cleaned first.
+    suffix: str (single) or list of str (multiple)
+    """
+    cleaned = re.sub(r'[\u200b\u200c\u200d]', '', str(value))
+    suffixes = [suffix] if isinstance(suffix, str) else suffix
+    for s in suffixes:
+        s = s.strip()
+        if s:
+            cleaned = re.sub(re.escape(s), '', cleaned)
     return cleaned.strip()
+
+
+def detect_campaign_suffix(dataframes: list) -> dict:
+    """
+    Scan campaign columns across all loaded DataFrames and detect
+    common suffix patterns like _WE/SEC26018, _WE/SEC26022.
+    Returns: { suffix_string: count, ... } sorted by frequency
+    """
+    all_names = []
+    campaign_cols = ['Campaign name', 'Campaign', 'Campaigns']
+    for df in dataframes:
+        if df is None: continue
+        for col in campaign_cols:
+            if col in df.columns:
+                all_names.extend(df[col].dropna().astype(str).tolist())
+                break
+
+    found = {}
+    pattern = r'(_WE/SEC\d+)'
+    for name in all_names:
+        clean = re.sub(r'[\u200b\u200c\u200d]', '', name)
+        for m in re.findall(pattern, clean):
+            found[m] = found.get(m, 0) + 1
+
+    return dict(sorted(found.items(), key=lambda x: -x[1]))
 
 
 # ── File loaders ─────────────────────────────────────────────────────────────
