@@ -479,6 +479,69 @@ def qa_report(merged_df, total_ad_rows):
     }
 
 
+# ── LINE Ads mapping ─────────────────────────────────────────────────────────
+LINE_ADS_DEFAULT_MAPPING = {
+    "Campaign name":                              "Campaign Name",
+    "Ad group name":                              "Ad Group",
+    "Ad name":                                    "Ad",
+    "Cost":                                       "Cost",
+    "Impressions":                                "Imprs.",
+    "Video (viewed for at least three seconds)":  "Views",
+    "Clicks":                                     "Clicks",
+}
+
+
+def load_line_ads(uploaded_file) -> pd.DataFrame:
+    """Load LINE Ads CSV report (UTF-16 tab-delimited, no skiprows)."""
+    raw = uploaded_file.read()
+    uploaded_file.seek(0)
+    for enc in ['utf-16', 'utf-16-le']:
+        try:
+            df = pd.read_csv(io.BytesIO(raw), encoding=enc, sep='\t',
+                             skiprows=0, on_bad_lines='skip', dtype=str)
+            if len(df.columns) > 5:
+                df.columns = [str(c).strip() for c in df.columns]
+                if 'Campaign name' in df.columns:
+                    df = df[df['Campaign name'].notna()]
+                    df = df[~df['Campaign name'].astype(str).str.strip().isin(['--', '-', '', 'nan'])]
+                return df.reset_index(drop=True)
+        except Exception:
+            continue
+    raise ValueError("Cannot load LINE Ads CSV. Expected UTF-16 tab-delimited format.")
+
+
+def build_line_report(df, col_mapping=None, strip_suffix="") -> pd.DataFrame:
+    """Map LINE Ads columns to standard output names."""
+    if col_mapping is None:
+        col_mapping = LINE_ADS_DEFAULT_MAPPING
+
+    result = {"Report Source": "LINE Ads"}
+    for raw_col, std_name in col_mapping.items():
+        result[std_name] = df[raw_col].values if raw_col in df.columns else None
+
+    out = pd.DataFrame(result)
+
+    # Strip suffix from Campaign Name
+    if "Campaign Name" in out.columns:
+        out["Campaign Name"] = out["Campaign Name"].astype(str).apply(
+            lambda x: _strip_suffix(_clean_str(x), strip_suffix)
+        )
+
+    # Clean ZWS from Ad Group and Ad
+    for col in ["Ad Group", "Ad"]:
+        if col in out.columns:
+            out[col] = out[col].astype(str).apply(
+                lambda x: re.sub(r'[\u200b\u200c\u200d]', '', x).strip()
+            )
+
+    # Clean numerics
+    for col in ["Cost", "Imprs.", "Views", "Clicks"]:
+        if col in out.columns:
+            out[col] = out[col].apply(_clean_number)
+
+    return out.reset_index(drop=True)
+
+
 # ── Google PMX mapping ────────────────────────────────────────────────────────
 # NOTE: PMX Asset group asset details report does NOT contain Campaign or
 # Asset group columns. Only asset-level metrics are available.
