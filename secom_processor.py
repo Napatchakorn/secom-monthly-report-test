@@ -299,6 +299,13 @@ def build_google_report(df, col_mapping=None, strip_suffix=""):
             lambda x: _strip_suffix(_clean_str(x), strip_suffix)
         )
 
+    # Clean zero-width spaces from Ad Group and Ad columns
+    for col in ["Ad Group", "Ad"]:
+        if col in out.columns:
+            out[col] = out[col].astype(str).apply(
+                lambda x: re.sub(r'[​‌‍]', '', x).strip()
+            )
+
     # Detect Report Source from Campaign Name
     out["Report Source"] = out["Campaign Name"].apply(_detect_google_source)
 
