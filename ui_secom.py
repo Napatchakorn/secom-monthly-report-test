@@ -8,7 +8,7 @@ import streamlit as st
 import pandas as pd
 
 from secom_processor import (
-    load_meta_ads, load_google_ads, load_google_pmx, load_google_sem, load_ga4_session,
+    load_meta_ads, load_google_ads, load_google_pmx, load_google_pmx_conversion, load_google_sem, load_ga4_session,
     build_meta_report, build_google_report, build_google_pmx_report, build_google_sem_report,
     build_ga4_report, combine_ad_sources, merge_reports, finalize_master, qa_report,
     detect_campaign_suffix,
@@ -67,16 +67,19 @@ def render_secom():
         st.stop()
 
     # ── Auto-detect files ─────────────────────────────────────────────────────
-    meta_file   = None
-    google_file = None
-    pmx_file    = None
-    sem_file    = None
-    ga4_file    = None
+    meta_file     = None
+    google_file   = None
+    pmx_file      = None
+    pmx_conv_file = None
+    sem_file      = None
+    ga4_file      = None
 
     for f in uploaded:
         name = f.name.lower()
         if any(k in name for k in ["meta", "facebook"]) and name.endswith((".xlsx", ".xls")):
             meta_file = meta_file or f
+        elif any(k in name for k in ["pmx", "pmax"]) and "conv" in name and name.endswith(".csv"):
+            pmx_conv_file = pmx_conv_file or f
         elif any(k in name for k in ["pmx", "pmax"]) and name.endswith(".csv"):
             pmx_file = pmx_file or f
         elif any(k in name for k in ["sem"]) and name.endswith(".csv"):
@@ -102,6 +105,7 @@ def render_secom():
         _file_row("📘", "GA4 Session",          ga4_file,    optional=False)
     with r2c1:
         _file_row("📒", "Google PMX",           pmx_file,    optional=True)
+        _file_row("📒", "Google PMX Conversion", pmx_conv_file, optional=True)
     with r2c2:
         _file_row("📓", "Google SEM",           sem_file,    optional=True)
 
@@ -123,9 +127,13 @@ def render_secom():
         try: df_google_raw = load_google_ads(google_file)
         except Exception as e: st.error(f"❌ Google Ads: {e}"); st.stop()
 
+    df_pmx_conv_raw = None
     if pmx_file:
         try: df_pmx_raw = load_google_pmx(pmx_file)
         except Exception as e: st.error(f"❌ Google PMX: {e}"); st.stop()
+    if pmx_conv_file:
+        try: df_pmx_conv_raw = load_google_pmx_conversion(pmx_conv_file)
+        except Exception as e: st.error(f"❌ Google PMX Conversion: {e}"); st.stop()
 
     if sem_file:
         try: df_sem_raw = load_google_sem(sem_file)
@@ -147,7 +155,7 @@ def render_secom():
     _step("02", "Preview Raw Data")
     tab_labels, tab_dfs = [], []
     for label, df in [("📗 Meta Ads", df_meta_raw), ("📙 Google YT/DMG/GDN", df_google_raw),
-                       ("📒 Google PMX", df_pmx_raw), ("📓 Google SEM", df_sem_raw),
+                       ("📒 Google PMX", df_pmx_raw), ("📒 PMX Conversion", df_pmx_conv_raw), ("📓 Google SEM", df_sem_raw),
                        ("📘 GA4 Session", df_ga4_raw)]:
         if df is not None:
             tab_labels.append(label); tab_dfs.append(df)
@@ -286,7 +294,7 @@ def render_secom():
             try:
                 df_meta_rep   = build_meta_report(df_meta_raw, meta_mapping, strip_suffix) if df_meta_raw is not None else None
                 df_google_rep = build_google_report(df_google_raw, google_mapping, strip_suffix) if df_google_raw is not None else None
-                df_pmx_rep    = build_google_pmx_report(df_pmx_raw, pmx_mapping, strip_suffix) if df_pmx_raw is not None else None
+                df_pmx_rep    = build_google_pmx_report(df_pmx_raw, df_conversion=df_pmx_conv_raw, col_mapping=pmx_mapping, strip_suffix=strip_suffix) if df_pmx_raw is not None else None
                 df_sem_rep    = build_google_sem_report(df_sem_raw, {}, strip_suffix) if df_sem_raw is not None else None
                 df_ga4_rep    = build_ga4_report(df_ga4_raw, ga4_mapping)
 
