@@ -572,45 +572,130 @@ def _extract_sem_campaign_name(campaign_raw: str, ad_group: str) -> str:
     camp = re.sub(r"-[A-Za-z][A-Za-z0-9]*$", "", camp).strip()
     return camp
 
-def build_google_pmx_report(df, col_mapping=None, strip_suffix=""):
+def load_google_pmx_conversion(uploaded_file) -> pd.DataFrame:
+    """Load Google PMX Conversion breakdown report (UTF-16 tab, skiprows=2)."""
+    raw = uploaded_file.read()
+    uploaded_file.seek(0)
+    for enc in ['utf-16', 'utf-16-le']:
+        try:
+            df = pd.read_csv(io.BytesIO(raw), encoding=enc, sep='\t',
+                             skiprows=2, on_bad_lines='skip', dtype=str)
+            if len(df.columns) > 5:
+                df.columns = [str(c).strip() for c in df.columns]
+                if 'Asset group' in df.columns:
+                    df = df[df['Asset group'].notna()]
+                    df = df[~df['Asset group'].astype(str).str.startswith('Total')]
+                return df.reset_index(drop=True)
+        except Exception:
+            continue
+    raise ValueError("Cannot load PMAX Conversion CSV. Expected UTF-16 tab-delimited format.")
+
+
+def build_google_pmx_report(df, df_conversion=None, col_mapping=None, strip_suffix=""):
     """
-    Build Google PMX report.
-    Uses Campaign and Asset group columns (asset-group level report).
-    Ad = Asset group (no ad-level data in this report type).
+    Build Google PMX report from asset-group metrics file and optional conversion file.
+    - df: main PMAX asset group metrics (Cost, Impr., Clicks, Engagements)
+    - df_conversion: optional PMAX conversion breakdown (lead_complete_all, contact_call, contact_line)
+    Output: 1 row per Campaign + Asset group (7 rows for SECOM).
+    Ad Group = parent group (B2B_Custom), Ad = full asset group name (B2B_Custom_cctv)
     """
-    if col_mapping is None:
-        col_mapping = GOOGLE_PMX_DEFAULT_MAPPING
+    df = df.copy()
 
-    result = {"Report Source": "Google PMX"}
+    # Clean campaign and asset group names
+    for col in ['Campaign', 'Asset group']:
+        if col in df.columns:
+            df[col] = df[col].astype(str).apply(
+                lambda x: re.sub(r'[\u200b\u200c\u200d]', '', x).strip())
 
-    for raw_col, std_name in col_mapping.items():
-        if raw_col in df.columns:
-            result[std_name] = df[raw_col].values
-        else:
-            result[std_name] = 0
+    # Strip suffix from Campaign
+    if strip_suffix:
+        suffixes = [strip_suffix] if isinstance(strip_suffix, str) else strip_suffix
+        for s in suffixes:
+            s = s.strip()
+            if s:
+                df['Campaign'] = df['Campaign'].apply(
+                    lambda x: re.sub(r'_WE/SEC\d+', '', re.sub(re.escape(s), '', x)).strip())
+    else:
+        df['Campaign'] = df['Campaign'].apply(
+            lambda x: re.sub(r'_WE/SEC\d+', '', x).strip())
 
-    out = pd.DataFrame(result)
+    # Keep only enabled asset groups
+    if 'Asset group status' in df.columns:
+        df = df[df['Asset group status'].astype(str).str.strip() == 'ENABLED']
 
-    # Strip suffix from Campaign Name
-    if "Campaign Name" in out.columns:
-        out["Campaign Name"] = out["Campaign Name"].astype(str).apply(
-            lambda x: _strip_suffix(_clean_str(x), strip_suffix)
-        )
+    # Numeric columns
+    for col in ['Cost', 'Impr.', 'Clicks', 'Engagements']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(
+                df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
 
-    # Ad = Asset group (same as Ad Group — no ad-level data)
-    if "Ad Group" in out.columns:
-        out["Ad Group"] = out["Ad Group"].apply(lambda x: re.sub(r'[​‌‍]', '', str(x) if x is not None else '').strip())
-        out["Ad"] = out["Ad Group"]
+    # Build output base
+    out = pd.DataFrame({
+        'Report Source': 'Google PMX',
+        'Campaign Name': df['Campaign'],
+        'Ad':            df['Asset group'],
+        'Cost':          df.get('Cost', 0),
+        'Imprs.':        df.get('Impr.', 0),
+        'Views':         0,
+        'Clicks':        df.get('Clicks', 0),
+        'Engagements':   df.get('Engagements', 0),
+        'Leads':         0,
+        'Call Events':   0,
+        'LINE Events':   0,
+    }).reset_index(drop=True)
 
-    # Views / Leads / Call Events / LINE Events not in PMX asset group report
-    for col in ["Views", "Leads", "Call Events", "LINE Events"]:
-        if col not in out.columns:
-            out[col] = 0
+    # Ad Group = parent (B2B_Custom from B2B_Custom_cctv)
+    def _parent(x):
+        x = re.sub(r'[\u200b\u200c\u200d]', '', str(x)).strip()
+        m = re.match(r'(B[23][BC]_Custom)', x, re.IGNORECASE)
+        return m.group(1) if m else x
 
-    # Clean numeric columns
-    for col in ["Cost", "Imprs.", "Views", "Clicks", "Engagements", "Leads", "Call Events", "LINE Events"]:
-        if col in out.columns:
-            out[col] = out[col].apply(_clean_number)
+    out['Ad Group'] = out['Ad'].apply(_parent)
+
+    # Merge conversion data if provided
+    if df_conversion is not None:
+        df_c = df_conversion.copy()
+        for col in ['Campaign', 'Asset group', 'Conversion action']:
+            if col in df_c.columns:
+                df_c[col] = df_c[col].astype(str).apply(
+                    lambda x: re.sub(r'[\u200b\u200c\u200d]', '', x).strip())
+
+        # Strip suffix from conversion campaign names too
+        df_c['Campaign'] = df_c['Campaign'].apply(
+            lambda x: re.sub(r'_WE/SEC\d+', '', x).strip())
+        if strip_suffix:
+            suffixes = [strip_suffix] if isinstance(strip_suffix, str) else strip_suffix
+            for s in suffixes:
+                s = s.strip()
+                if s:
+                    df_c['Campaign'] = df_c['Campaign'].apply(
+                        lambda x: re.sub(re.escape(s), '', x).strip())
+
+        df_c['All conv.'] = pd.to_numeric(
+            df_c['All conv.'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+
+        def _pivot(action):
+            sub = df_c[df_c['Conversion action'] == action]
+            return sub.groupby(['Campaign', 'Asset group'])['All conv.'].sum().reset_index()
+
+        leads   = _pivot('lead_complete_all').rename(columns={'All conv.': '_leads'})
+        calls   = _pivot('contact_call').rename(columns={'All conv.': '_calls'})
+        lines   = _pivot('contact_line').rename(columns={'All conv.': '_lines'})
+
+        out = out.merge(leads, left_on=['Campaign Name', 'Ad'],
+                        right_on=['Campaign', 'Asset group'], how='left').drop(
+                        columns=['Campaign', 'Asset group'], errors='ignore')
+        out = out.merge(calls, left_on=['Campaign Name', 'Ad'],
+                        right_on=['Campaign', 'Asset group'], how='left').drop(
+                        columns=['Campaign', 'Asset group'], errors='ignore')
+        out = out.merge(lines, left_on=['Campaign Name', 'Ad'],
+                        right_on=['Campaign', 'Asset group'], how='left').drop(
+                        columns=['Campaign', 'Asset group'], errors='ignore')
+
+        out['Leads']       = out['_leads'].fillna(0)
+        out['Call Events'] = out['_calls'].fillna(0)
+        out['LINE Events'] = out['_lines'].fillna(0)
+        out = out.drop(columns=['_leads', '_calls', '_lines'], errors='ignore')
 
     return out.reset_index(drop=True)
 
