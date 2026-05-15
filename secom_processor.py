@@ -361,9 +361,10 @@ def combine_ad_sources(*report_dfs) -> pd.DataFrame:
 def merge_reports(combined_df, ga4_df):
     """
     Hierarchical left join — 2 levels:
-    Level 1: Campaign + Ad Group + Ad  (exact — Meta/DMG/YT)
-    Level 2: Campaign + Ad Group       (fallback — SEM/PMX, no ad-level data)
-    No Level 3 to prevent session inflation.
+    Level 1: Campaign + Ad Group + Ad  (exact)
+    Level 2: Campaign + Ad Group       (only for groups with ZERO Level 1 matches)
+    If any row in an ad group already matched at Level 1, the rest stay 0.
+    This prevents the same sessions being counted multiple times.
     """
     GA4_COLS = ["GA4 | Sessions", "GA4 | Avg. Session Duration", "Bounce rate%"]
 
@@ -375,7 +376,7 @@ def merge_reports(combined_df, ga4_df):
     ga4_l1 = ga4_df.copy()
     ga4_l2 = _agg(ga4_df, ["Campaign Name", "Ad Group"])
 
-    # Level 1: exact
+    # Level 1: exact merge on Campaign + Ad Group + Ad
     merged = pd.merge(combined_df, ga4_l1,
                       on=["Campaign Name", "Ad Group", "Ad"],
                       how="left", suffixes=("", "_ga4"))
@@ -384,16 +385,32 @@ def merge_reports(combined_df, ga4_df):
     if sess_col not in merged.columns:
         merged[sess_col] = None
 
-    # Level 2: Campaign + Ad Group fallback
+    # Find which Campaign+AdGroup combos had ANY Level 1 match
+    matched_mask = merged[sess_col].notna()
+    matched_groups = set(
+        zip(merged.loc[matched_mask, "Campaign Name"],
+            merged.loc[matched_mask, "Ad Group"])
+    )
+
+    # Level 2: only apply to groups with ZERO Level 1 matches
     unmatched_mask = merged[sess_col].isna()
     if unmatched_mask.any():
         unmatched_idx = merged.index[unmatched_mask]
         sub = combined_df.loc[unmatched_idx].copy()
-        filled = pd.merge(sub, ga4_l2,
-                          on=["Campaign Name", "Ad Group"],
-                          how="left", suffixes=("", "_ga4"))
-        for col in [c for c in GA4_COLS if c in filled.columns]:
-            merged.loc[unmatched_idx, col] = filled[col].values
+
+        # Filter sub to only rows whose Campaign+AdGroup has NO Level 1 matches
+        no_l1_mask = sub.apply(
+            lambda r: (r["Campaign Name"], r["Ad Group"]) not in matched_groups,
+            axis=1
+        )
+        eligible = sub[no_l1_mask]
+
+        if not eligible.empty:
+            filled = pd.merge(eligible, ga4_l2,
+                              on=["Campaign Name", "Ad Group"],
+                              how="left", suffixes=("", "_ga4"))
+            for col in [c for c in GA4_COLS if c in filled.columns]:
+                merged.loc[eligible.index, col] = filled[col].values
 
     return merged
 
