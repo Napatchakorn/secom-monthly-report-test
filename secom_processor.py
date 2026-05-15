@@ -440,7 +440,10 @@ def finalize_master(df):
         br = pd.to_numeric(out["Bounce rate%"], errors="coerce")
         if br.dropna().max() <= 1.0:
             br = br * 100
-        out["Bounce rate%"] = br
+        # Format as "xx.xx%"
+        out["Bounce rate%"] = br.apply(
+            lambda x: f"{x:.2f}%" if pd.notna(x) and x != 0 else "0.00%"
+        )
 
     if "GA4 | Sessions" in out.columns:
         out["GA4 | Sessions"] = pd.to_numeric(out["GA4 | Sessions"], errors="coerce")
