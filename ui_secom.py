@@ -104,10 +104,11 @@ def render_secom():
     with r1c3:
         _file_row("📘", "GA4 Session",          ga4_file,    optional=False)
     with r2c1:
-        _file_row("📒", "Google PMX",           pmx_file,    optional=True)
-        _file_row("📒", "Google PMX Conversion", pmx_conv_file, optional=True)
+        _file_row("📒", "Google PMX",           pmx_file,      optional=True)
     with r2c2:
-        _file_row("📓", "Google SEM",           sem_file,    optional=True)
+        _file_row("📒", "PMX Conversion",       pmx_conv_file, optional=True)
+    with r2c3:
+        _file_row("📓", "Google SEM",           sem_file,      optional=True)
 
     if not meta_file and not google_file:
         st.error("Need at least one ad source file: Meta Ads (.xlsx) or Google Ads (.csv).")
