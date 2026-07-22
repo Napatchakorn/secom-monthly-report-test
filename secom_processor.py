@@ -623,8 +623,25 @@ def load_google_sem(uploaded_file) -> pd.DataFrame:
 
     lines = text.split('\n')
 
-    # 2) Find the header row (line containing 'Ad group')
-    skip = _detect_skiprows(text, ['Ad group status', 'Ad group', 'ad group'])
+    # 2) Find the REAL header row: the first line that both mentions the
+    #    'ad group' column AND is actually delimited (has multiple separators).
+    #    This skips Google Ads title rows like "Ad group report" / date range,
+    #    which contain 'ad group' as free text but have no delimiters.
+    def _is_delimited(line):
+        return max(line.count('\t'), line.count(','), line.count(';')) >= 2
+
+    skip = 0
+    for i, line in enumerate(lines[:20]):
+        if 'ad group' in line.lower() and _is_delimited(line):
+            skip = i
+            break
+    else:
+        # No keyword+delimiter match — fall back to first delimited line
+        for i, line in enumerate(lines[:20]):
+            if _is_delimited(line):
+                skip = i
+                break
+
     header_line = lines[skip] if skip < len(lines) else lines[0]
 
     # 3) Pick the delimiter by counting candidates on the header line
