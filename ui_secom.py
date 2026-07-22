@@ -77,6 +77,10 @@ def render_secom():
 
     for f in uploaded:
         name = f.name.lower()
+        # Channel-distribution / performance reports belong to PMAX mode,
+        # not SECOM. Ignore them here so they can't grab the GA4 slot.
+        if any(k in name for k in ["channel", "performance"]) and "ga4" not in name and "session" not in name:
+            continue
         if any(k in name for k in ["meta", "facebook"]) and name.endswith((".xlsx", ".xls")):
             meta_file = meta_file or f
         elif any(k in name for k in ["pmx", "pmax"]) and "conv" in name and name.endswith(".csv"):
@@ -93,8 +97,8 @@ def render_secom():
             ga4_file = ga4_file or f
         elif name.endswith((".xlsx", ".xls")) and meta_file is None:
             meta_file = f
-        elif name.endswith(".csv") and ga4_file is None:
-            ga4_file = f
+        # NOTE: no blind ".csv -> GA4" fallback. GA4 must match 'ga4'/'session'
+        # in the filename, otherwise an unrelated CSV can hijack the GA4 slot.
 
     # Show detection
     st.markdown("**File Detection:**")
