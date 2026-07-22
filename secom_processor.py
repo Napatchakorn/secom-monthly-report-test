@@ -602,30 +602,69 @@ def load_google_pmx(uploaded_file) -> pd.DataFrame:
 
 def load_google_sem(uploaded_file) -> pd.DataFrame:
     """
-    Load Google SEM Ad group report CSV. UTF-16 tab-delimited.
-    Auto-detects skiprows by finding the header row containing 'Ad group status'.
+    Load Google SEM Ad group report CSV.
+    Robust to encoding (UTF-16 / UTF-8 / UTF-8-BOM / cp874) and delimiter
+    (tab / comma / semicolon). Auto-detects the header row by looking for
+    a line containing 'Ad group'.
     """
     raw = uploaded_file.read()
     uploaded_file.seek(0)
 
-    for enc in ['utf-16', 'utf-16-le']:
+    # 1) Decode with the first encoding that works
+    text = None
+    for enc in ['utf-16', 'utf-16-le', 'utf-8-sig', 'utf-8', 'cp874', 'latin-1']:
         try:
             text = raw.decode(enc)
-            # Auto-detect skiprows
-            skip = _detect_skiprows(text, ['Ad group status', 'Ad group\t', 'ad group'])
-            df = pd.read_csv(io.BytesIO(raw), encoding=enc, sep='\t',
-                             skiprows=skip, on_bad_lines='skip', dtype=str)
-            if len(df.columns) > 5:
-                df.columns = [str(c).strip() for c in df.columns]
-                if 'Ad group status' in df.columns:
-                    df = df[~df['Ad group status'].astype(str).str.startswith('Total')]
-                if 'Campaign' in df.columns:
-                    df = df[df['Campaign'].notna()]
-                    df = df[~df['Campaign'].astype(str).str.strip().isin(['--', '-', '', 'nan'])]
-                return df.reset_index(drop=True)
-        except Exception:
+            break
+        except (UnicodeDecodeError, UnicodeError):
             continue
-    raise ValueError("Cannot load Google SEM CSV. Expected UTF-16 tab-delimited format.")
+    if text is None:
+        raise ValueError("Cannot decode Google SEM CSV (unrecognised encoding).")
+
+    lines = text.split('\n')
+
+    # 2) Find the header row (line containing 'Ad group')
+    skip = _detect_skiprows(text, ['Ad group status', 'Ad group', 'ad group'])
+    header_line = lines[skip] if skip < len(lines) else lines[0]
+
+    # 3) Pick the delimiter by counting candidates on the header line
+    counts = {d: header_line.count(d) for d in ['\t', ',', ';']}
+    delim = max(counts, key=counts.get)
+    if counts[delim] == 0:
+        delim = '\t'  # fallback
+
+    def _read(sep):
+        d = pd.read_csv(io.StringIO(text), sep=sep, skiprows=skip,
+                        on_bad_lines='skip', dtype=str, engine='python')
+        d.columns = [str(c).strip() for c in d.columns]
+        return d
+
+    df = _read(delim)
+
+    # 4) If we only got one column, the delimiter guess was wrong — try the others
+    if len(df.columns) <= 1:
+        for alt in [d for d in ['\t', ',', ';'] if d != delim]:
+            try:
+                alt_df = _read(alt)
+                if len(alt_df.columns) > len(df.columns):
+                    df = alt_df
+            except Exception:
+                continue
+
+    if len(df.columns) <= 1:
+        raise ValueError(
+            "Could not parse Google SEM CSV into columns. "
+            "Re-export from Google Ads as CSV and re-upload."
+        )
+
+    # 5) Drop totals / summary rows
+    if 'Ad group status' in df.columns:
+        df = df[~df['Ad group status'].astype(str).str.startswith('Total')]
+    if 'Campaign' in df.columns:
+        df = df[df['Campaign'].notna()]
+        df = df[~df['Campaign'].astype(str).str.strip().isin(['--', '-', '', 'nan'])]
+
+    return df.reset_index(drop=True)
 
 
 def _extract_sem_campaign_name(campaign_raw: str, ad_group: str) -> str:
